@@ -1,0 +1,6 @@
+# directories to ignore
+/checkpoints
+/outputs
+
+# file extensions to ignore
+*.out
