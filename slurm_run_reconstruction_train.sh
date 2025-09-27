@@ -6,7 +6,7 @@
 #SBATCH --mem=32G
 #SBATCH --partition=CIACD
 
-OUTPUT_NAME="eq_vae_2"
+OUTPUT_NAME="original_vqgan_no_disc"
 
 OUTPUT_ROOT="./outputs/$OUTPUT_NAME"
 LOG_DIR="$OUTPUT_ROOT/logs"
@@ -31,14 +31,16 @@ unset __conda_setup
 conda activate bio_ldm
 
 # Launch script
-python3 -W ignore train_full_rec_eq_vae.py \
-    --batch_size 2 \
+# python3 -W ignore train_vqgan_loss.py \
+python3 -W ignore train_original_vqgan_model_n_loss.py \
+    --batch_size 4 \
     --num_workers 16 \
-    --kl_loss_weight 1.e-6 \
-    --n_epochs 100 \
-    --n_epochs_warm_up 0 \
+    --checkpoint_path "/home/tiagofroes/workplace/pytorch_vqgan/outputs/original_vqgan_no_disc/checkpoints/epoch_3_weights.pt" \
+    --n_epochs 20 \
+    --n_steps_warm_up 0 \
     --val_interval 1 \
     --save_interval 1 \
     --output_dir "$OUTPUT_NAME" \
-    --learning_rate 1.e-4 \
-    --accumulation_steps 64
+    --learning_rate 9.45503262094184e-06 \
+    --accumulation_steps 1 \
+    --quant_loss_weight 1.0

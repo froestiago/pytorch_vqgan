@@ -77,7 +77,8 @@ class PaintingDataset(torch.utils.data.Dataset):
     def _normalize_image(self, image):
         # Normalize to [-1, 1] range assuming input is in [0, 255]
         # If your data has a different range, adjust accordingly
-        norm_image = image / 127.5 - 1.0
+        norm_image = (image/127.5 - 1.0)
+        # norm_image = image / 255
         return norm_image
 
     def __len__(self):

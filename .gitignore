@@ -1,6 +1,7 @@
 # directories to ignore
 /checkpoints
 /outputs
+/taming
 
 # file extensions to ignore
 *.out

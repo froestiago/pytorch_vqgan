@@ -24,6 +24,8 @@ from cellpainting_loader_2ch import get_dataloader
 
 from vqloss.vq_loss import VQLPIPSWithDiscriminator
 
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
 from utils import denormalize_image, create_output_dir, save_config_file_copy_at_output
 
 
@@ -36,8 +38,8 @@ def load_model(checkpoint_path):
     ddconfig = {"double_z": False,
                 "z_channels": 256,
                 "resolution": 256,
-                "in_channels": 3,
-                "out_ch": 3,
+                "in_channels": 2,
+                "out_ch": 2,
                 "ch": 128,
                 "ch_mult": (1, 1, 2, 2, 4),
                 "num_res_blocks": 2,
@@ -52,7 +54,8 @@ def load_model(checkpoint_path):
     
     # load checkpoint
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    
+    vqgan.load_state_dict(checkpoint)
+    """
     # workaround to load model trained using pytorch lightning
     state_dict = checkpoint["state_dict"]
 
@@ -110,6 +113,7 @@ def load_model(checkpoint_path):
     for param in vqgan.parameters():
         param.requires_grad = True
 
+    """
 
     print("✅ custom vqgan prepared")
     
@@ -164,8 +168,8 @@ def train(train_loader, val_loader, model, args):
         disc_start=0,  # Start discriminator after warm-up epochs
         codebook_weight=args.quant_loss_weight,
         pixelloss_weight=1.0,
-        disc_num_layers=3,
-        disc_in_channels=3,
+        disc_num_layers=2,
+        disc_in_channels=2,
         disc_factor=1.0,
         disc_weight=1.0,
         perceptual_weight=1.0,
@@ -180,6 +184,9 @@ def train(train_loader, val_loader, model, args):
     # Validation metrics - data_range should be 2.0 for [-1, 1] normalized images
     ssim_fn = StructuralSimilarityIndexMeasure(data_range=2.0).to(device)
 
+    val_l1_loss = torch.nn.L1Loss().to(device)
+    val_l2_loss = torch.nn.MSELoss().to(device)
+
     # Optimizers
     generator_optimizer = torch.optim.AdamW(params=model.parameters(), lr = learning_rate, weight_decay = 0.01)
     discriminator_optimizer = torch.optim.AdamW(params=vq_loss.discriminator.parameters(), lr = args.learning_rate)
@@ -188,8 +195,10 @@ def train(train_loader, val_loader, model, args):
     scaler_generator = GradScaler()
     scaler_discriminator = GradScaler()
 
+    lr_scheduler = CosineAnnealingLR(generator_optimizer, T_max=n_epochs)
+
     # Main loop
-    for epoch in range(1, n_epochs):
+    for epoch in range(4, n_epochs+1):
 
         model.train()
 
@@ -201,7 +210,7 @@ def train(train_loader, val_loader, model, args):
         epoch_discriminator_loss = 0.0
         epoch_generator_loss = 0.0
 
-        progress_bar = tqdm(total=len(train_loader), ncols = 100, disable = False)
+        progress_bar = tqdm(total=len(train_loader), ncols = 200, disable = False)
         progress_bar.set_description(f"Epoch {epoch}")
         print_every_train = len(train_loader) // 100
 
@@ -278,6 +287,8 @@ def train(train_loader, val_loader, model, args):
             model.eval()
             vq_loss.eval()
 
+            val_l1 = 0.0
+            val_l2 = 0.0
             val_img_rec_loss = 0.0
             val_p_loss = 0.0    
             val_codebook_loss = 0.0
@@ -296,6 +307,9 @@ def train(train_loader, val_loader, model, args):
 
                         reconstructed_image, codebook_loss = model(original_image)
                         val_codebook_loss += codebook_loss
+
+                        val_l1 += val_l1_loss(reconstructed_image, original_image).item()
+                        val_l2 += val_l2_loss(reconstructed_image, original_image).item()
 
                         loss, log = vq_loss(codebook_loss=codebook_loss,
                                             inputs=original_image,
@@ -334,11 +348,17 @@ def train(train_loader, val_loader, model, args):
             avg_p_loss = val_p_loss / len(val_loader)
             avg_codebook_loss = val_codebook_loss / len(val_loader)
             avg_ssim = ssim_fn.compute()
+            avg_l1 = val_l1 / len(val_loader)
+            avg_l2 = val_l2 / len(val_loader)
 
-            print(f"\n\nValidation Epoch {epoch}: img_rec: {avg_img_rec:.4f}, ssim: {avg_ssim:.4f}, p_loss: {avg_p_loss:.4f}, codebook_loss: {avg_codebook_loss:.4f}\n\n")
+            print(f"\n\nValidation Epoch {epoch}: img_rec: {avg_img_rec:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}, ssim: {avg_ssim:.4f}, p_loss: {avg_p_loss:.4f}, codebook_loss: {avg_codebook_loss:.4f}\n\n")
 
             torch.cuda.empty_cache()
-                        
+
+        lr_scheduler.step()
+        current_lr = generator_optimizer.param_groups[0]["lr"]
+        print(f"Updated  learning rate = {current_lr}")
+
         # Save checkpoint
         if (epoch + 1) % save_interval == 0:
             torch.save(model.state_dict(), f'{output_path}/checkpoints/epoch_{epoch}_weights.pt')
@@ -379,7 +399,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=12, help="Number of workers to load data")
 
     # Training parameters
-    parser.add_argument('--checkpoint_path', type=str, default = None, help='Path to the model checkpoint (downloaded from taming transformers repo)')
+    parser.add_argument('--checkpoint_path', type=str, default = "./", help='Path to the model checkpoint (downloaded from taming transformers repo)')
     parser.add_argument('--n_epochs', type=int, default=100, help='Number of total training epochs')
     parser.add_argument('--n_steps_warm_up', type=int, default=10, help='Number of epochs before the discriminator starts to work')
     parser.add_argument('--val_interval', type=int, default=5, help='Validation interval')

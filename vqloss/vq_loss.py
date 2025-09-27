@@ -34,11 +34,11 @@ def vanilla_d_loss(logits_real, logits_fake):
     return d_loss
 
 
-def add_zero_channel(img):
-    """Convert 2-channel to RGB by using channels as R,G and setting B=0"""
-    # img shape: (B, 2, H, W) -> (B, 3, H, W)
-    zeros = torch.zeros_like(img[:, 0:1, :, :])
-    return torch.cat([img[:, 0:1, :, :], img[:, 1:2, :, :], zeros], dim=1)
+# def add_zero_channel(img):
+#     """Convert 2-channel to RGB by using channels as R,G and setting B=0"""
+#     # img shape: (B, 2, H, W) -> (B, 3, H, W)
+#     zeros = torch.zeros_like(img[:, 0:1, :, :])
+#     return torch.cat([img[:, 0:1, :, :], img[:, 1:2, :, :], zeros], dim=1)
 
 
 class VQLPIPSWithDiscriminator(nn.Module):
@@ -87,9 +87,14 @@ class VQLPIPSWithDiscriminator(nn.Module):
                 global_step, last_layer=None, cond=None, split="train"):
         rec_loss = torch.abs(inputs.contiguous() - reconstructions.contiguous())
         if self.perceptual_weight > 0:
-            p_inputs = add_zero_channel(inputs)
-            p_reconstructions = add_zero_channel(reconstructions)
-            p_loss = self.perceptual_loss(p_inputs.contiguous(), p_reconstructions.contiguous())
+            p_loss = torch.tensor([0.0]).to(rec_loss.device)
+            
+            for channel_index in range(reconstructions.shape[1]):
+                p_loss += self.perceptual_loss(reconstructions[:,channel_index,:,:].unsqueeze(dim = 1),
+                                               inputs[:,channel_index,:,:].unsqueeze(dim = 1)).mean()
+                
+            p_loss = p_loss / reconstructions.shape[1]
+            
             rec_loss = rec_loss + self.perceptual_weight * p_loss
         else:
             p_loss = torch.tensor([0.0])
@@ -103,12 +108,10 @@ class VQLPIPSWithDiscriminator(nn.Module):
             # generator update
             if cond is None:
                 assert not self.disc_conditional
-                disc_reconstructions = add_zero_channel(reconstructions)
-                logits_fake = self.discriminator(disc_reconstructions.contiguous())
+                logits_fake = self.discriminator(reconstructions.contiguous())
             else:
                 assert self.disc_conditional
-                disc_reconstructions = add_zero_channel(reconstructions)
-                logits_fake = self.discriminator(torch.cat((disc_reconstructions.contiguous(), cond), dim=1))
+                logits_fake = self.discriminator(torch.cat((reconstructions.contiguous(), cond), dim=1))
             g_loss = -torch.mean(logits_fake)
 
             try:
@@ -133,14 +136,14 @@ class VQLPIPSWithDiscriminator(nn.Module):
 
         if optimizer_idx == 1:
             # second pass for discriminator update
-            disc_inputs = add_zero_channel(inputs)
-            disc_reconstructions = add_zero_channel(reconstructions)
+            # disc_inputs = add_zero_channel(inputs)
+            # disc_reconstructions = add_zero_channel(reconstructions)
             if cond is None:    
-                logits_real = self.discriminator(disc_inputs.contiguous().detach())
-                logits_fake = self.discriminator(disc_reconstructions.contiguous().detach())
+                logits_real = self.discriminator(inputs.contiguous().detach())
+                logits_fake = self.discriminator(reconstructions.contiguous().detach())
             else:
-                logits_real = self.discriminator(torch.cat((disc_inputs.contiguous().detach(), cond), dim=1))
-                logits_fake = self.discriminator(torch.cat((disc_reconstructions.contiguous().detach(), cond), dim=1))
+                logits_real = self.discriminator(torch.cat((inputs.contiguous().detach(), cond), dim=1))
+                logits_fake = self.discriminator(torch.cat((reconstructions.contiguous().detach(), cond), dim=1))
 
             disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
             d_loss = disc_factor * self.disc_loss(logits_real, logits_fake)

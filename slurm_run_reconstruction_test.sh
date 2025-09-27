@@ -1,0 +1,37 @@
+#!/bin/bash
+#SBATCH --job-name=vae_train
+#SBATCH --time=48:00:00
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
+#SBATCH --partition=CIACD
+
+OUTPUT_NAME="test_original_weights"
+
+OUTPUT_ROOT="./outputs/$OUTPUT_NAME"
+LOG_DIR="$OUTPUT_ROOT/logs"
+
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/slurm_%j.out")
+exec 2> >(tee -a "$LOG_DIR/slurm_%j.err" >&2)
+
+# Conda init (non-interactive)
+__conda_setup="$('/home/tiagofroes/miniconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+else
+    if [ -f "/home/tiagofroes/miniconda3/etc/profile.d/conda.sh" ]; then
+        . "/home/tiagofroes/miniconda3/etc/profile.d/conda.sh"
+    else
+        export PATH="/home/tiagofroes/miniconda3/bin:$PATH"
+    fi
+fi
+unset __conda_setup
+
+conda activate bio_ldm
+
+# Launch script
+# python3 -W ignore train_vqgan_loss.py \
+python3 -W ignore vqgan_reconstruction_test.py \
+    --checkpoint_path "/home/tiagofroes/workplace/pytorch_vqgan/outputs/original_vqgan/checkpoints/epoch_6_weights.pt" \
+    --output_dir "$OUTPUT_NAME" \
